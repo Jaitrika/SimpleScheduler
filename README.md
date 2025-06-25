@@ -1,5 +1,4 @@
 # SimpleScheduler
-Explanation of the code:
 Our code implements a simple shell and scheduler system using shared memory for inter-process communication.
 
 1.⁠⁠Shell (main program):
@@ -27,7 +26,4 @@ Our code implements a simple shell and scheduler system using shared memory for 
 - Priority-based scheduling: Uses a priority queue to select the next process to run.
 - Time slicing: Processes run for a fixed time slice before being preempted.
 
-Group ID: 36
-Group members:
-Aditi Aryan (2023037)
-Jaitrika Reddy (2023333)
+link to ELF-loader:https://github.com/Jaitrika/SimpleLoader-in-C
