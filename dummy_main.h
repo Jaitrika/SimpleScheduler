@@ -11,8 +11,11 @@ int dummy_main(int argc, char **argv);
 
 int main(int argc, char **argv) {
     // Custom code to support SimpleScheduler implementation
-    signal(SIGSTOP, SIG_DFL);  // Reset SIGSTOP handler to default
-    signal(SIGCONT, SIG_DFL);  // Reset SIGCONT handler to default
+    // signal(SIGSTOP, SIG_DFL);  // Reset SIGSTOP handler to default
+    // signal(SIGCONT, SIG_DFL);  // Reset SIGCONT handler to default
+    
+    setvbuf(stdout, NULL, _IONBF, 0); // Line-buffered to unbuffered
+    setvbuf(stderr, NULL, _IONBF, 0);
 
     // You can add more initialization code here if needed
 
@@ -21,6 +24,7 @@ int main(int argc, char **argv) {
     // You can add cleanup code here if needed
     return ret;
 }
+
 
 #define main dummy_main
 

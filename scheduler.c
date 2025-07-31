@@ -10,8 +10,9 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <semaphore.h>
+#include <errno.h>
 
-//struct definitions
+// struct definitions
 struct Process
 {
     int pid, priority;
@@ -45,6 +46,8 @@ bool ending = false;
 struct hist *p_table;
 struct queue *running;
 struct pqueue *waiting;
+bool processes_submitted = false;
+
 
 // check if queue is empty
 bool is_qempty(struct queue *q)
@@ -55,7 +58,8 @@ bool is_qempty(struct queue *q)
 // check if queue is full
 bool q_full(struct queue *q)
 {
-    return (q->tail + 1) % q->capacity == q->head;;
+    return (q->tail + 1) % q->capacity == q->head;
+    ;
 }
 
 // add a process to the running queue
@@ -67,7 +71,7 @@ void running_enqueue(struct queue *q, struct Process *proc)
         return;
     }
     q->items[q->tail] = proc;
-    q->tail = (q->tail + 1) % q->capacity; 
+    q->tail = (q->tail + 1) % q->capacity;
     q->curr++;
 }
 
@@ -101,6 +105,32 @@ void swap_p(struct Process *a, struct Process *b)
     struct Process temp = *a;
     *a = *b;
     *b = temp;
+}
+
+// signal handler
+static void sign_handler(int signum)
+{
+
+    if (signum == SIGINT)
+    {
+        ending = true;
+    }
+    else if (signum == SIGCHLD)
+    {
+        int saved_errno = errno;
+        pid_t pid;
+        int status;
+
+        // Reap all terminated children
+        while ((pid = waitpid(-1, &status, WNOHANG)) > 0)
+        {
+            // Optional: debug print
+            printf("🔥 SIGCHLD handler reaped PID %d\n", pid);
+            fflush(stdout);
+        }
+
+        errno = saved_errno;
+    }
 }
 
 // move a process up the heap to maintain heap property
@@ -180,14 +210,15 @@ void start_time(struct timeval *start)
 unsigned long end_time(struct timeval *start)
 {
     struct timeval end;
-    unsigned long t;
-
     gettimeofday(&end, 0);
-    t = ((end.tv_sec / 1000) + end.tv_usec*1000) - ((start->tv_sec / 1000) + start->tv_usec*1000);
-    return t;
+
+    unsigned long start_ms = start->tv_sec * 1000 + start->tv_usec / 1000;
+    unsigned long end_ms = end.tv_sec * 1000 + end.tv_usec / 1000;
+
+    return end_ms - start_ms;
 }
 
-//to terminate schduler
+// to terminate schduler
 void terminate()
 {
     printf("terminating scheduler\n");
@@ -217,25 +248,87 @@ void terminate()
     exit(0);
 }
 
-//main scheduler code- chks the queues and schedules the processes
+struct Process *running_remove_pid(struct queue *q, pid_t pid)
+{
+    int size = q->curr;
+    struct Process *found = NULL;
+
+    for (int i = 0; i < size; i++)
+    {
+        int index = (q->head + i) % q->capacity;
+        struct Process *proc = q->items[index];
+
+        if (proc->pid == pid && found == NULL)
+        {
+            found = proc;
+            continue; // Skip adding this back
+        }
+
+        // Move everything forward, preserving order but skipping 'found'
+        int new_index = (q->head + i - (found != NULL ? 1 : 0) + q->capacity) % q->capacity;
+        q->items[new_index] = proc;
+    }
+
+    if (found != NULL)
+    {
+        q->curr--;
+        q->tail = (q->tail - 1 + q->capacity) % q->capacity;
+    }
+
+    return found;
+}
+
 void scheduler(int ncpu, int time_slice)
 {
     while (true)
     {
-       sleep(time_slice / 1000);
-       //usleep(time_slice * 1000); 
         if (sem_wait(&p_table->mutex) == -1)
         {
             perror("sem_wait");
             exit(1);
         }
-        // this if-block - scheduler terminates after natural endingination of all processes
+
         if (ending && is_qempty(running) && is_pqempty(waiting))
         {
             terminate();
         }
 
-        // adding process to ready queue if they have submit true
+        // Check for completed processes FIRST - before any other operations
+        int status;
+        pid_t pid;
+        while ((pid = waitpid(-1, &status, WNOHANG)) > 0)
+        {
+            printf("WAITPID saw PID %d exiting\n", pid);
+            fflush(stdout);
+
+            struct Process *finished = running_remove_pid(running, pid);
+
+            if (!finished)
+            {
+                for (int i = 0; i < p_table->history_count; i++)
+                {
+                    if (p_table->history[i].pid == pid)
+                    {
+                        finished = &p_table->history[i];
+                        break;
+                    }
+                }
+            }
+
+            if (finished && !finished->completed)
+            {
+                finished->completed = true;
+                // Calculate final execution time
+                if (finished->exe_time == 0)
+                    finished->exe_time = time_slice; // Minimum 1 time slice
+                
+                printf("Process %s with PID %d completedehh\n",
+                       finished->command, finished->pid);
+                fflush(stdout);
+            }
+        }
+
+        // Enqueue new submitted processes
         for (int i = 0; i < p_table->history_count; i++)
         {
             if (p_table->history[i].submit && !p_table->history[i].completed && !p_table->history[i].in_queue)
@@ -252,80 +345,163 @@ void scheduler(int ncpu, int time_slice)
             }
         }
 
-        // checking if the running queue and stopping it after tslice
+        // Handle time slice expiration for running processes
         if (!is_qempty(running))
         {
-            for (int i = 0; i < ncpu; i++)
+            for (int i = 0; i < ncpu && !is_qempty(running); i++)
             {
-                if (!is_qempty(running))
+                struct Process *proc = running->items[running->head];
+                
+                // Calculate how long this process has been running in current slice
+                int current_slice_time = end_time(&proc->start);
+
+                // Check if process is still alive
+                int status;
+                pid_t result = waitpid(proc->pid, &status, WNOHANG);
+                
+                if (result == proc->pid)
                 {
-                    if (!running->items[running->head]->completed)
+                    // Process completed during this time slice
+                    if (!proc->completed)
                     {
-                        struct Process *proc = running->items[running->head];
-                        waiting_enqueue(waiting, proc);
-                        proc->exe_time += time_slice;
-                        start_time(&proc->start);
-                        if (kill(proc->pid, SIGSTOP) == -1)
+                        proc->completed = true;
+                        proc->exe_time += current_slice_time;
+                        // Ensure minimum 1 time slice if process finished quickly
+                        if (proc->exe_time < time_slice)
+                            proc->exe_time = time_slice;
+                        printf("Process %s with PID %d completedehh\n",
+                               proc->command, proc->pid);
+                        fflush(stdout);
+                    }
+                }
+                else if (result == 0 && current_slice_time >= time_slice)
+                {
+                    // Process still running but time slice expired
+                    proc->exe_time += time_slice;
+                    
+                    // Stop the process and move to waiting queue
+                    if (kill(proc->pid, SIGSTOP) == -1)
+                    {
+                        perror("kill SIGSTOP");
+                        // Process might have just finished, check again
+                        if (waitpid(proc->pid, &status, WNOHANG) == proc->pid)
                         {
-                            perror("kill");
-                            exit(1);
+                            proc->completed = true;
+                            printf("Process %s with PID %d completedehh\n",
+                                   proc->command, proc->pid);
+                            fflush(stdout);
                         }
+                    }
+                    else
+                    {
+                        // Successfully stopped, add to waiting queue
+                        waiting_enqueue(waiting, proc);
+                        start_time(&proc->start); // Reset start time for wait calculation
+                    }
+                    running_dequeue(running);
+                }
+                else if (result == 0)
+                {
+                    // Process still running, time slice not expired yet
+                    // Just continue to next process, don't dequeue
+                    break;
+                }
+                else if (result == -1)
+                {
+                    // waitpid error - process might have been reaped already
+                    if (errno == ECHILD)
+                    {
+                        // Process already reaped, mark as completed
+                        if (!proc->completed)
+                        {
+                            proc->completed = true;
+                            proc->exe_time += current_slice_time;
+                            if (proc->exe_time < time_slice)
+                                proc->exe_time = time_slice;
+                            printf("Process %s with PID %d completedehh\n",
+                                   proc->command, proc->pid);
+                            fflush(stdout);
+                        }
+                    }
+                    else
+                    {
+                        perror("waitpid in time slice handling");
                     }
                     running_dequeue(running);
                 }
             }
         }
 
-        // adding processes to running queue based on ncpu
+        // Resume next eligible processes from waiting queue
         if (!is_pqempty(waiting))
         {
-            for (int i = 0; i < ncpu; i++)
+            for (int i = 0; i < ncpu && !is_pqempty(waiting); i++)
             {
-                if (!is_pqempty(waiting))
+                struct Process *proc = extract_min(waiting);
+                
+                // Calculate wait time
+                proc->wait_time += end_time(&proc->start);
+                start_time(&proc->start); // Start new execution time measurement
+                
+                // Resume the process
+                if (kill(proc->pid, SIGCONT) == -1)
                 {
-                    struct Process *proc = extract_min(waiting);
-                    proc->wait_time += end_time(&proc->start);
-                    start_time(&proc->start);
-                    if (kill(proc->pid, SIGCONT) == -1)
+                    perror("kill SIGCONT");
+                    // Process might have finished while stopped
+                    int status;
+                    if (waitpid(proc->pid, &status, WNOHANG) == proc->pid)
                     {
-                        perror("kill");
-                        exit(1);
+                        proc->completed = true;
+                        if (proc->exe_time == 0)
+                            proc->exe_time = time_slice;
+                        printf("Process %s with PID %d completedehh\n",
+                               proc->command, proc->pid);
+                        fflush(stdout);
                     }
+                }
+                else
+                {
+                    printf("Scheduler: resuming PID %d\n", proc->pid);
+                    fflush(stdout);
                     running_enqueue(running, proc);
                 }
             }
         }
+
         if (sem_post(&p_table->mutex) == -1)
         {
             perror("sem_post");
             exit(1);
         }
+
+        // Sleep for a reasonable polling interval
+        // But track actual time slice expiration per process
+        usleep(50000); // 50ms polling for responsiveness
     }
 }
 
-// signal handler
-static void sign_handler(int signum)
-{
-
-    if (signum == SIGINT)
-    {
-        ending = true;
-    }
-}
-
-// main function
 int main()
 {
+    printf("hey sched here\n");
+    fflush(stdout);
+
     struct sigaction sig;
-    if (memset(&sig, 0, sizeof(sig)) == 0)
-    {
-        perror("memset");
-        exit(1);
-    }
+    memset(&sig, 0, sizeof(sig)); // ✅ correct: no `== 0` check
     sig.sa_handler = sign_handler;
+    sigemptyset(&sig.sa_mask);
+    sig.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+
+    // Handle SIGINT
     if (sigaction(SIGINT, &sig, NULL) == -1)
     {
-        perror("sigaction");
+        perror("sigaction SIGINT");
+        exit(1);
+    }
+
+    // Handle SIGCHLD
+    if (sigaction(SIGCHLD, &sig, NULL) == -1)
+    {
+        perror("sigaction SIGCHLD");
         exit(1);
     }
 

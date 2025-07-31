@@ -1,5 +1,5 @@
 #include <stdio.h>
-#include "dummy_main.h"
+//#include "dummy_main.h"
 
 int main() {
     long long i;
@@ -8,5 +8,6 @@ int main() {
         result += i * i;
     }
     printf("Result: %f\n", result);
+    fflush(stdout);
     return 0;
 }
