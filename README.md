@@ -1,4 +1,17 @@
 # SimpleScheduler
+Choosing tslice and Scheduler Polling Interval:
+
+Short-lived processes (e.g., fib.c) can complete in just a few milliseconds. To accurately detect and account for such fast jobs:
+
+We recommend using small tslice values (e.g., 1–10 ms).
+
+The scheduler should poll very frequently (sleep 0–5 ms or not at all) to avoid missing the process completion.
+
+Longer processes (e.g., a.c) benefit from larger tslice values (e.g., 100–1000 ms) to reduce context-switching overhead.
+
+In these cases, the scheduler can sleep 50 ms or more between polling cycles without significant accuracy loss.
+
+This balance ensures efficient CPU usage while maintaining accurate job accounting, especially for mixed workloads.
 Our code implements a simple shell and scheduler system using shared memory for inter-process communication.
 
 1.⁠⁠Shell (main program):
