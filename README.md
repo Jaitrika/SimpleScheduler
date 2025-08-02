@@ -79,7 +79,3 @@ gcc scheduler.c -o scheduler
 
 - ELF Loader: Simple loader for ELF binaries —  
   `https://github.com/Jaitrika/SimpleLoader-in-C`
-
-[1] https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/62101886/70a97cdf-cca4-432d-9ece-91ceb1fbf9ea/shellsched.c
-[2] https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/62101886/4217b7a8-1e54-40c0-ae2d-31349b2a67b5/scheduler.c
-[3] https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/62101886/299a7941-631d-4642-b09f-0a7f69ff054b/README.md
