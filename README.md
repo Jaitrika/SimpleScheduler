@@ -77,5 +77,4 @@ gcc scheduler.c -o scheduler
 
 ## See Also
 
-- ELF Loader: Simple loader for ELF binaries —  
-  `https://github.com/Jaitrika/SimpleLoader-in-C`
+- ELF Loader: Simple loader for ELF binaries —  https://github.com/Jaitrika/SimpleLoader-in-C
